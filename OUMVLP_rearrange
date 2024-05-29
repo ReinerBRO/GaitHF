@@ -1,0 +1,37 @@
+"""
+Created on May 28, 2024
+
+@author: orangeblossom39
+
+@email: zhujc2321@mails.edu.jlu.cn
+"""
+import os
+import shutil
+
+src_dir = r""
+dst_dir = r""   
+
+def create_dir(path):
+    if not os.path.exists(path):
+        os.makedirs(path)
+
+def rearrange_dataset(src_dir, dst_dir):
+    for root, dirs, files in os.walk(src_dir):
+        for file in files:
+            if file.endswith('.png'):
+
+                parts = root.split(os.sep)
+                if len(parts) >= 5:
+                    subject = parts[-3]   
+                    sequence = parts[-2]   
+                    view = parts[-1]
+
+                    new_dir = os.path.join(dst_dir, subject, sequence, view)
+                    create_dir(new_dir)
+
+                    old_path = os.path.join(root, file)
+                    new_path = os.path.join(new_dir, file)
+                    shutil.copy2(old_path, new_path)
+
+
+rearrange_dataset(src_dir, dst_dir)
