@@ -1,0 +1,206 @@
+"""
+Created on May 27, 2024
+
+@author: orangeblossom39
+
+@email: zhujc2321@mails.edu.jlu.cn
+"""
+import os
+import cv2
+import numpy as np
+import pandas as pd
+import argparse
+from multiprocessing import Pool, TimeoutError as MP_TimeoutError
+from time import sleep
+import warnings
+
+warnings.filterwarnings("ignore", category=UserWarning)
+
+START_MSG = "START "
+FINISH_MSG = "FINISH"
+WARNING_MSG = "WARNING"
+FAIL_MSG = "FAIL"
+
+
+def str_to_bool(s):
+    if s.upper() not in {'FALSE', 'TRUE'}:
+        raise ValueError('Invalid boolean string')
+    return s.upper() == 'TRUE'
+
+
+parser = argparse.ArgumentParser(description='Data Preprocessing')
+parser.add_argument('--input_path', default='CASIA-B-raw', type=str, help='Path to raw data.')
+parser.add_argument('--output_path', default='CASIA-B-output', type=str,
+                    help='Path for processed data.')
+parser.add_argument('--log_file', default='./pretreatment.log', type=str, help='Path for log file.')
+parser.add_argument('--log', default=False, type=str_to_bool,
+                    help='Log all events if True, else only warnings and errors.')
+parser.add_argument('--worker_num', default=10, type=int, help='Number of subprocesses to use.')
+parser.add_argument('--xls_path', default='', type=str,
+                    help='Path to the XLS file with CASIA-B subjects information.')
+args = parser.parse_args()
+
+INPUT_DIR = args.input_path
+OUTPUT_DIR = args.output_path
+LOGGING = args.log
+LOG_FILE = args.log_file
+NUM_WORKERS = args.worker_num
+XLS_PATH = args.xls_path
+
+TARGET_HEIGHT = 64
+TARGET_WIDTH = 64
+
+# Read XLS data
+subject_data = pd.read_excel(XLS_PATH, dtype={'Subject ID': str, 'Gender': str, 'Height(cm)': int})
+# print(subject_data)
+
+
+def create_log_entry(pid, comment, logs):
+    log_entry = ''
+    if isinstance(logs, str):
+        logs = [logs]
+    for log in logs:
+        log_entry += "# JOB %d : --%s-- %s\n" % (pid, comment, log)
+    return log_entry
+
+
+def write_log(pid, comment, logs):
+    log_entry = create_log_entry(pid, comment, logs)
+    if comment in [WARNING_MSG, FAIL_MSG]:
+        with open(LOG_FILE, 'a') as log_f:
+            log_f.write(log_entry)
+    if comment in [START_MSG, FINISH_MSG]:
+        if pid % 500 != 0:
+            return
+    print(log_entry, end='')
+
+
+def process_image(img, seq_info, frame_name, pid):
+    if img.sum() <= 10000:
+        message = 'seq:%s, frame:%s, no data, %d.' % ('-'.join(seq_info), frame_name, img.sum())
+        warnings.warn(message)
+        write_log(pid, WARNING_MSG, message)
+        return None
+
+    y_sum = img.sum(axis=1)
+    y_top = (y_sum != 0).argmax(axis=0)
+    y_btm = (y_sum != 0).cumsum(axis=0).argmax(axis=0)
+    img = img[int(y_top):int(y_btm), :]
+
+    aspect_ratio = img.shape[1] / img.shape[0]
+    target_width = int(TARGET_HEIGHT * aspect_ratio)
+    img = cv2.resize(img, (target_width, TARGET_HEIGHT), interpolation=cv2.INTER_CUBIC)
+
+    sum_points = img.sum()
+    x_sum_cumulative = img.sum(axis=0).cumsum()
+    x_center = next((i for i, val in enumerate(x_sum_cumulative) if val > sum_points / 2), -1)
+    if x_center < 0:
+        message = 'seq:%s, frame:%s, no center.' % ('-'.join(seq_info), frame_name)
+        warnings.warn(message)
+        write_log(pid, WARNING_MSG, message)
+        return None
+
+    half_target_width = int(TARGET_WIDTH / 2)
+    left = x_center - half_target_width
+    right = x_center + half_target_width
+    if left <= 0 or right >= img.shape[1]:
+        left += half_target_width
+        right += half_target_width
+        padding = np.zeros((img.shape[0], half_target_width))
+        img = np.concatenate([padding, img, padding], axis=1)
+    img = img[:, left:right]
+    return img.astype('uint8')
+
+
+def process_sequence(seq_info, pid):
+    seq_name = '-'.join(seq_info)
+    write_log(pid, START_MSG, seq_name)
+
+    seq_path = os.path.join(INPUT_DIR, *seq_info)
+    out_dir = os.path.join(OUTPUT_DIR, *seq_info)
+    os.makedirs(out_dir, exist_ok=True)
+
+    frame_list = sorted(os.listdir(seq_path))
+
+    subject_id = seq_info[0]
+    print(subject_id)
+    subject_row = subject_data[subject_data['Subject ID'] == subject_id]
+    if subject_row.empty:
+        print(f"No data found for Subject ID {subject_id}")
+        warnings.warn(f"No data found for Subject ID {subject_id}")
+        return
+    height = subject_row['Height(cm)'].values[0]
+    gender = subject_row['Gender'].values[0]
+
+    print(f"id:{subject_id}, Height:{height}, Gender:{gender}")
+    valid_frame_count = 0
+
+    for frame_name in frame_list:
+        frame_path = os.path.join(seq_path, frame_name)
+        img = cv2.imread(frame_path)[:, :, 0]
+        img = process_image(img, seq_info, frame_name, pid)
+
+        scale_factor = min(height / 198, 1)
+        dst_height = int(TARGET_HEIGHT * scale_factor)
+        dst_width = int(TARGET_WIDTH * scale_factor)
+
+        padding_h = (TARGET_HEIGHT - dst_height) // 2
+        padding_w = (TARGET_WIDTH - dst_width) // 2
+
+        img = cv2.resize(img, (dst_width, dst_height))
+        img = np.expand_dims(img, axis=-1)
+
+        padded_img = np.zeros((TARGET_HEIGHT, TARGET_WIDTH, 1), dtype=np.uint8)
+        padded_img[padding_h:padding_h + dst_height, padding_w:padding_w + dst_width] = img
+
+        if padded_img is not None:
+            save_path = os.path.join(out_dir, frame_name)
+            cv2.imwrite(save_path, padded_img)
+            valid_frame_count += 1
+
+    if valid_frame_count < 5:
+        message = 'seq:%s, less than 5 valid data.' % ('-'.join(seq_info))
+        warnings.warn(message)
+        write_log(pid, WARNING_MSG, message)
+
+    write_log(pid, FINISH_MSG, f'Contain {valid_frame_count} valid frames. Saved to {out_dir}.')
+
+
+if __name__ == '__main__':
+    pool = Pool(NUM_WORKERS)
+    results = []
+    pid = 0
+
+    print('Preprocessing Start.\n'
+          f'Input path: {INPUT_DIR}\n'
+          f'Output path: {OUTPUT_DIR}\n'
+          f'Log file: {LOG_FILE}\n'
+          f'Worker num: {NUM_WORKERS}')
+
+    id_folders = sorted(os.listdir(INPUT_DIR))
+    for id_folder in id_folders:
+        seq_types = sorted(os.listdir(os.path.join(INPUT_DIR, id_folder)))
+        for seq_type in seq_types:
+            views = sorted(os.listdir(os.path.join(INPUT_DIR, id_folder, seq_type)))
+            for view in views:
+                seq_info = [id_folder, seq_type, view]
+                # print(seq_info)
+                results.append(pool.apply_async(process_sequence, args=(seq_info, pid)))
+                sleep(0.02)
+                pid += 1
+
+    pool.close()
+    unfinished_tasks = 1
+    while unfinished_tasks > 0:
+        unfinished_tasks = 0
+        for i, res in enumerate(results):
+            try:
+                res.get(timeout=0.1)
+            except Exception as e:
+                if isinstance(e, MP_TimeoutError):
+                    unfinished_tasks += 1
+                    continue
+                else:
+                    print(f'\n\n\nERROR OCCUR: PID ##{i}##, ERRORTYPE: {type(e)}\n\n\n')
+                    raise e
+    pool.join()
