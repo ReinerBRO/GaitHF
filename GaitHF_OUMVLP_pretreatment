@@ -1,0 +1,233 @@
+"""
+Created on May 26, 2024
+
+@author: orangeblossom39
+
+@email: zhujc2321@mails.edu.jlu.cn
+"""
+import os
+import cv2
+import numpy as np
+import argparse
+import random
+from multiprocessing import Pool, TimeoutError as MP_TimeoutError
+from time import sleep
+import warnings
+
+warnings.filterwarnings("ignore", category=UserWarning)
+
+START_MSG = "START "
+FINISH_MSG = "FINISH"
+WARNING_MSG = "WARNING"
+FAIL_MSG = "FAIL"
+
+
+def str_to_bool(s):
+    if s.upper() not in {'FALSE', 'TRUE'}:
+        raise ValueError('Invalid boolean string')
+    return s.upper() == 'TRUE'
+
+
+parser = argparse.ArgumentParser(description='Data Preprocessing')
+parser.add_argument('--input_path', default='OUMVLP-raw', type=str, help='Path to raw data.')
+parser.add_argument('--output_path', default='OUMVLP', type=str,
+                    help='Path for processed data.')
+parser.add_argument('--log_file', default='./pretreatment.log', type=str, help='Path for log file.')
+parser.add_argument('--log', default=False, type=str_to_bool,
+                    help='Log all events if True, else only warnings and errors.')
+parser.add_argument('--worker_num', default=10, type=int, help='Number of subprocesses to use.')
+args = parser.parse_args()
+
+INPUT_DIR = args.input_path
+OUTPUT_DIR = args.output_path
+LOGGING = args.log
+LOG_FILE = args.log_file
+NUM_WORKERS = args.worker_num
+
+TARGET_HEIGHT = 64
+TARGET_WIDTH = 64
+
+# Height probability distributions
+male_height_probs = [2.266445732073865e-05, 3.772821432906495e-05, 6.172472519826126e-05, 9.924852872229164e-05,
+                     0.00015684150333175639, 0.00024359587539674548, 0.0003718355320410714, 0.000557832581512947,
+                     0.000822486738365239, 0.001191862012012526, 0.0016974426280724078, 0.0023759444950192943,
+                     0.0032685079305161593, 0.004419110561365663, 0.005872084129782063, 0.007668700096331214,
+                     0.00984290575357085, 0.012416437083361279, 0.015393690649753669, 0.01875688079823766,
+                     0.022462111926221384, 0.02643702999169517, 0.03058065982961433, 0.034765874171594546,
+                     0.03884468219636833, 0.04265619469081677, 0.046036761755695155, 0.04883144175095533,
+                     0.05090570417952811, 0.05215614397714291, 0.0525190214758427, 0.051975646543904186,
+                     0.050553973805190555, 0.04832621941050419, 0.045402782189761126, 0.04192318146066798,
+                     0.03804504652252594, 0.0339323645610059, 0.02974419674830797, 0.0256249177190353,
+                     0.02169675698540574, 0.018055074194475607, 0.014766440993229768, 0.011869283180800383,
+                     0.00937659687442316, 0.007280112492353719, 0.0055552425072750156, 0.004166199249978075,
+                     0.0030707829954689236, 0.0022244891327182215, 0.0015837386466286407, 0.0011081761498931142,
+                     0.0007620897758940925, 0.0005150809832320524, 0.0003421503071482368, 0.00022337284828788384,
+                     0.00014332298729891058, 9.038020763196819e-05, 5.601480425609928e-05, 3.411962950361502e-05,
+                     2.042573896199329e-05]
+female_height_probs = [1.5092225985876588e-05, 2.6507167246397845e-05, 4.563510767853512e-05, 7.701238955338652e-05,
+                       0.0001273936823392025, 0.00020656701343759154, 0.00032832189874942494, 0.000511522268580233,
+                       0.0007811871054104996, 0.0011694224471110563, 0.0017159855882228434, 0.0024682077272693715,
+                       0.003479971209400034, 0.004809450684299341, 0.006515401623434683, 0.008651926218433845,
+                       0.011261865351180192, 0.014369239029945871, 0.017971450475183087, 0.022032228164594075,
+                       0.026476443381722503, 0.031187948628501327, 0.03601139289705835, 0.040758573762460615,
+                       0.04521931611311347, 0.04917619890381608, 0.05242179425005822, 0.05477656143580889,
+                       0.05610526422547801, 0.056329827281838774, 0.055436932213196455, 0.05347932537584488,
+                       0.05057065882412637, 0.046874566223535585, 0.0425894340159918, 0.037930837275411244,
+                       0.03311379382767177, 0.028336838705986245, 0.023769486406394313, 0.01954403063100596,
+                       0.015751952831431604, 0.012444590082347995, 0.009637240724442386, 0.0073156131095512,
+                       0.005443455222614357, 0.003970310520959308, 0.0028385737337487393, 0.0019893067705771816,
+                       0.001366561582029524, 0.0009202005926979284, 0.0006073816311115143, 0.00039297654495829004,
+                       0.0002492283405028939, 0.00015493660223997452, 9.441400536647215e-05, 5.639551871228221e-05,
+                       3.302011130146276e-05]
+
+
+def generate_log_string(pid, comment, logs):
+    log_str = ''
+    if isinstance(logs, str):
+        logs = [logs]
+    for log in logs:
+        log_str += "# JOB %d : --%s-- %s\n" % (pid, comment, log)
+    return log_str
+
+
+def log_event(pid, comment, logs):
+    log_str = generate_log_string(pid, comment, logs)
+    if comment in [WARNING_MSG, FAIL_MSG]:
+        with open(LOG_FILE, 'a') as log_f:
+            log_f.write(log_str)
+    if comment in [START_MSG, FINISH_MSG]:
+        if pid % 500 != 0:
+            return
+    print(log_str, end='')
+
+
+def process_image(img, seq_info, frame_name, pid):
+    if img.sum() <= 10000:
+        message = 'seq:%s, frame:%s, no data, %d.' % ('-'.join(seq_info), frame_name, img.sum())
+        warnings.warn(message)
+        log_event(pid, WARNING_MSG, message)
+        return None
+
+    y_sum = img.sum(axis=1)
+    y_top = (y_sum != 0).argmax(axis=0)
+    y_btm = (y_sum != 0).cumsum(axis=0).argmax(axis=0)
+    img = img[int(y_top):int(y_btm), :]
+
+    aspect_ratio = img.shape[1] / img.shape[0]
+    target_width = int(TARGET_HEIGHT * aspect_ratio)
+    img = cv2.resize(img, (target_width, TARGET_HEIGHT), interpolation=cv2.INTER_CUBIC)
+
+    sum_points = img.sum()
+    x_sum_cumulative = img.sum(axis=0).cumsum()
+    x_center = next((i for i, val in enumerate(x_sum_cumulative) if val > sum_points / 2), -1)
+    if x_center < 0:
+        message = 'seq:%s, frame:%s, no center.' % ('-'.join(seq_info), frame_name)
+        warnings.warn(message)
+        log_event(pid, WARNING_MSG, message)
+        return None
+
+    half_target_width = int(TARGET_WIDTH / 2)
+    left = x_center - half_target_width
+    right = x_center + half_target_width
+    if left <= 0 or right >= img.shape[1]:
+        left += half_target_width
+        right += half_target_width
+        padding = np.zeros((img.shape[0], half_target_width))
+        img = np.concatenate([padding, img, padding], axis=1)
+    img = img[:, left:right]
+    return img.astype('uint8')
+
+
+def generate_height():
+    gender = random.choice(['male', 'female'])
+    if gender == 'male':
+        height = random.choices(range(148, 209), weights=male_height_probs)[0]
+    else:
+        height = random.choices(range(136, 193), weights=female_height_probs)[0]
+    return height, gender
+
+
+def process_sequence(seq_info, pid):
+    seq_name = '-'.join(seq_info)
+    log_event(pid, START_MSG, seq_name)
+
+    seq_path = os.path.join(INPUT_DIR, *seq_info)
+    out_dir = os.path.join(OUTPUT_DIR, *seq_info)
+    os.makedirs(out_dir, exist_ok=True)
+
+    frame_list = sorted(os.listdir(seq_path))
+
+    height, gender = generate_height()
+    print(f"id:{seq_info[0]}, Height:{height}, Gender:{gender}")
+    valid_frame_count = 0
+
+    for frame_name in frame_list:
+        frame_path = os.path.join(seq_path, frame_name)
+        img = cv2.imread(frame_path)[:, :, 0]
+        img = process_image(img, seq_info, frame_name, pid)
+
+        scale_factor = min(height / 198, 1)
+        dst_height = int(TARGET_HEIGHT * scale_factor)
+        dst_width = int(TARGET_WIDTH * scale_factor)
+
+        padding_h = (TARGET_HEIGHT - dst_height) // 2
+        padding_w = (TARGET_WIDTH - dst_width) // 2
+
+        img = cv2.resize(img, (dst_width, dst_height))
+        img = np.expand_dims(img, axis=-1)
+
+        padded_img = np.zeros((TARGET_HEIGHT, TARGET_WIDTH, 1), dtype=np.uint8)
+        padded_img[padding_h:padding_h + dst_height, padding_w:padding_w + dst_width] = img
+
+        if padded_img is not None:
+            save_path = os.path.join(out_dir, frame_name)
+            cv2.imwrite(save_path, padded_img)
+            valid_frame_count += 1
+
+    if valid_frame_count < 5:
+        message = 'seq:%s, less than 5 valid data.' % ('-'.join(seq_info))
+        warnings.warn(message)
+        log_event(pid, WARNING_MSG, message)
+
+    log_event(pid, FINISH_MSG, f'Contain {valid_frame_count} valid frames. Saved to {out_dir}.')
+
+
+if __name__ == '__main__':
+    pool = Pool(NUM_WORKERS)
+    results = []
+    pid = 0
+
+    print('Preprocessing Start.\n'
+          f'Input path: {INPUT_DIR}\n'
+          f'Output path: {OUTPUT_DIR}\n'
+          f'Log file: {LOG_FILE}\n'
+          f'Worker num: {NUM_WORKERS}')
+
+    main_folders = sorted(os.listdir(INPUT_DIR))
+    for main_folder in main_folders:
+        sub_folders = sorted(os.listdir(os.path.join(INPUT_DIR, main_folder)))
+        for sub_folder in sub_folders:
+            seq_types = sorted(os.listdir(os.path.join(INPUT_DIR, main_folder, sub_folder)))
+            for seq_type in seq_types:
+                views = sorted(os.listdir(os.path.join(INPUT_DIR, main_folder, sub_folder, seq_type)))
+                for view in views:
+                    seq_info = [main_folder, sub_folder, seq_type, view]
+                    results.append(pool.apply_async(process_sequence, args=(seq_info, pid)))
+                    sleep(0.02)
+                    pid += 1
+
+    pool.close()
+    unfinished_tasks = 1
+    while unfinished_tasks > 0:
+        unfinished_tasks = 0
+        for i, res in enumerate(results):
+            try:
+                res.get(timeout=0.1)
+            except Exception as e:
+                if isinstance(e, MP_TimeoutError):
+                    unfinished_tasks += 1
+                    continue
+                else:
+                    print(f'\n\n\nERROR OCCUR: PID ##{i}##, ERRORTYPE: {type(e)}\n\n\n')
+                    raise e
+    pool.join()
