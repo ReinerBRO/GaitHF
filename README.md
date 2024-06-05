@@ -5,3 +5,5 @@ It is recommended to go to download the dataset and follow the website's instruc
 OU-MVLP: http://www.am.sanken.osaka-u.ac.jp/BiometricDB/GaitMVLP.html
 
 CASIA-B: http://www.cbsr.ia.ac.cn/china/Gait%20Databases%20CH.asp
+
+To prepare CASIA-B dataset for GaitHF pretreatment method
