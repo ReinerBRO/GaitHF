@@ -1,7 +1,11 @@
-# This source is based on https://github.com/AbnerHqC/GaitSet/blob/master/pretreatment.py
-# -*- coding: utf-8 -*-
-# @Author  : orangeblossom39
-# @Time    : 2024/5/26
+# This source is based on https://github.com/ShiqiYu/OpenGait/blob/master/datasets/pretreatment.py
+"""
+Created on May 27, 2024
+
+@author: orangeblossom39
+
+@email: zhujc2321@mails.edu.jlu.cn
+"""
 import argparse
 import logging
 import multiprocessing as mp
