@@ -8,8 +8,8 @@ Created on May 28, 2024
 import os
 import shutil
 
-src_dir = r""
-dst_dir = r""   
+src_dir = ""
+dst_dir = ""   
 
 def create_dir(path):
     if not os.path.exists(path):
