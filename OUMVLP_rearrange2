@@ -3,13 +3,14 @@ Created on May 28, 2024
 
 @author: orangeblossom39
 
+
 @email: zhujc2321@mails.edu.jlu.cn
 """
 import os
 import shutil
 
-src_dir = ""
-dst_dir = ""   
+src_dir = "" # the output path of GaitHF_OUMVLP_pretreatment.py
+dst_dir = "" # final data path for gait recognition
 
 def create_dir(path):
     if not os.path.exists(path):
