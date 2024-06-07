@@ -25,3 +25,5 @@ To prepare OU-MVLP dataset for GaitHF pretreatment method
     python imagetopkl.py -i rearrange2-output-path -o pkled-OUMVLP-path
 
 You could train or test your gait recognition models with prepared datasets and achieve higher accuracies.
+
+Due to database requirements, we provide restricted access to the HI-CASIA-B and HI-OU-MVLP datasets (https://doi.org/10.5281/zenodo.11513494). 
