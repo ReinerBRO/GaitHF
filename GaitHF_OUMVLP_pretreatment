@@ -43,7 +43,7 @@ OUTPUT_DIR = args.output_path
 LOGGING = args.log
 LOG_FILE = args.log_file
 NUM_WORKERS = args.worker_num
-
+ 
 TARGET_HEIGHT = 64
 TARGET_WIDTH = 64
 
