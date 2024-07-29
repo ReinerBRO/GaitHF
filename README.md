@@ -9,7 +9,7 @@ CASIA-B: http://www.cbsr.ia.ac.cn/china/Gait%20Databases%20CH.asp
 To prepare CASIA-B dataset for GaitHF pretreatment method
   1. Run：
 
-    python GaitHF_casiab_pretreatment.py -i CASIA-B-raw-path -o GaitHF_CASIA-B_pretreatment-path -x CASIA-B-subjects-info-pub.xls-path
+    python GaitHF_casiab_padding.py -i CASIA-B-raw-path -o GaitHF_CASIA-B_pretreatment-path -x CASIA-B-subjects-info-pub.xls-path
   2. If you are training or testing your model with OpenGait(https://github.com/ShiqiYu/OpenGait), pickled datasets are needed. Run:
 
     python imagetopkl.py -i GaitHF_CASIA-B_pretreatment-path -o pkled-CASIA-B-datapath
@@ -18,7 +18,7 @@ To prepare OU-MVLP dataset for GaitHF pretreatment method
   1. Run OUMVLP_rearrange1.py
   2. Run:
 
-    python GaitHF_OUMVLP_pretreatment.py -i rearrange1-output-path -o GaitHF_OUMVLP_preatreatment-path
+    python GaitHF_OUMVLP_padding.py -i rearrange1-output-path -o GaitHF_OUMVLP_preatreatment-path
   3. Run OUMVLP_rearrange2.py
   4. If you are training or testing your model with OpenGait, pickled datasets are needed. Run:
 
